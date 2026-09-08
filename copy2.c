@@ -287,9 +287,6 @@ void loop() {
 
       moveForward();
       break;
-
-
-    /* 往路の縦方向 */
     case OUTBOUND_VERTICAL:
       if (checkWall(frontDistance, WALL_DISTANCE)) {
         stopMotor();
@@ -308,7 +305,7 @@ void loop() {
       break;
 
 
-    /* 復路の縦方向 */
+    /* 復路 */
     case RETURN_VERTICAL:
       if (checkWall(frontDistance, WALL_DISTANCE)) {
         stopMotor();
@@ -325,9 +322,6 @@ void loop() {
 
       moveForward();
       break;
-
-
-    /* 復路の横方向 */
     case RETURN_HORIZONTAL:
       if (checkWall(frontDistance, GOAL_DISTANCE)) {
         stopMotor();
