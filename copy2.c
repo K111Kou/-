@@ -1,4 +1,5 @@
 #include <Servo.h>
+
 /* 超音波センサー */
 #define SERVOPIN  9
 #define HC_ECHO   2
@@ -17,48 +18,23 @@
 #define RMO_MA1   12
 
 Servo head;
-/* モーター設定 */
+
+/* モーターのPWM */
 const int L_PWM = 160;
 const int R_PWM = 140;
 
-
-/* 距離設定 */
-/* 正面との距離 */
+/* 壁との距離 */
 const float WALL_DISTANCE = 20.0;
-
-/* ゴールの停止距離 */
 const float GOAL_DISTANCE = 5.0;
 
 /* 旋回時間 */
-const int TURN_90_MS  = 350;
+const int TURN_90_MS = 350;
 const int TURN_180_MS = 700;
 
-/* LOWのとき検知するセンサーとして扱う */
+/* 赤外線センサーの反応 */
 const int IR_ACTIVE = LOW;
 
-/*
-   一瞬の誤検知を無視するため、
-   連続3回反応したら障害物と判断
-*/
-const int IR_CONFIRM_COUNT = 3;
-
-int leftIRCount  = 0;
-int rightIRCount = 0;
-
-
-/*
-   回避終了直後に同じボトルをもう一度
-   検知しないための無視時間
-*/
-const unsigned long IR_COOLDOWN = 800;
-
-unsigned long ignoreIRUntil = 0;
-
-
-/* =========================
-   コース状態
-   ========================= */
-
+/* 状態管理 */
 enum CourseState {
   OUTBOUND_HORIZONTAL,
   OUTBOUND_VERTICAL,
@@ -70,40 +46,25 @@ enum CourseState {
 CourseState state = OUTBOUND_HORIZONTAL;
 
 
-/* =========================
-   壁判定用
-   ========================= */
-
-/*
-   超音波も1回だけでは誤測定する可能性があるため
-   連続して壁が見えた場合だけ曲がる
-*/
-
-const int WALL_CONFIRM_COUNT = 3;
-
-int wallCount = 0;
-
-
-/* =========================
-   超音波
-   ========================= */
-
+/* 超音波センサーで距離を求める */
 float getDistance() {
   digitalWrite(HC_TRIG, LOW);
   delayMicroseconds(2);
   digitalWrite(HC_TRIG, HIGH);
   delayMicroseconds(10);
   digitalWrite(HC_TRIG, LOW);
-  unsigned long duration =
-      pulseIn(HC_ECHO, HIGH, 30000);
+
+  unsigned long duration = pulseIn(HC_ECHO, HIGH, 30000);
+
   if (duration == 0) {
     return 999.0;
   }
+
   return duration / 58.0;
 }
 
 
-/* サーボ角度を変えて測定 */
+/* 超音波センサーの角度を変えて距離を求める */
 float getDistanceAt(int angle) {
   head.write(angle);
   delay(300);
@@ -111,15 +72,12 @@ float getDistanceAt(int angle) {
 }
 
 
-/* =========================
-   モーター制御
-   ========================= */
-
 /* 前進 */
 void moveForward() {
   analogWrite(RMO_EA, R_PWM);
   digitalWrite(RMO_MA1, HIGH);
   digitalWrite(RMO_MA2, LOW);
+
   analogWrite(RMO_EB, L_PWM);
   digitalWrite(RMO_MB1, HIGH);
   digitalWrite(RMO_MB2, LOW);
@@ -131,38 +89,38 @@ void stopMotor() {
   analogWrite(RMO_EA, 0);
   digitalWrite(RMO_MA1, LOW);
   digitalWrite(RMO_MA2, LOW);
+
   analogWrite(RMO_EB, 0);
   digitalWrite(RMO_MB1, LOW);
   digitalWrite(RMO_MB2, LOW);
 }
 
 
-/* 左旋回 */
+/* 左折 */
 void turnLeft() {
   analogWrite(RMO_EA, R_PWM);
   digitalWrite(RMO_MA1, HIGH);
   digitalWrite(RMO_MA2, LOW);
+
   analogWrite(RMO_EB, L_PWM);
   digitalWrite(RMO_MB1, LOW);
   digitalWrite(RMO_MB2, HIGH);
 }
 
 
-/* 右旋回 */
+/* 右折 */
 void turnRight() {
   analogWrite(RMO_EA, R_PWM);
   digitalWrite(RMO_MA1, LOW);
   digitalWrite(RMO_MA2, HIGH);
+
   analogWrite(RMO_EB, L_PWM);
   digitalWrite(RMO_MB1, HIGH);
   digitalWrite(RMO_MB2, LOW);
 }
 
 
-/* =========================
-   90度旋回
-   ========================= */
-
+/* 左へ90度 */
 void turnLeft90() {
   stopMotor();
   delay(200);
@@ -173,6 +131,7 @@ void turnLeft90() {
 }
 
 
+/* 右へ90度 */
 void turnRight90() {
   stopMotor();
   delay(200);
@@ -183,10 +142,7 @@ void turnRight90() {
 }
 
 
-/* =========================
-   Uターン
-   ========================= */
-
+/* Uターン */
 void uTurn() {
   stopMotor();
   delay(200);
@@ -197,11 +153,7 @@ void uTurn() {
 }
 
 
-/* =========================
-   ボトル回避
-   ========================= */
-
-/* 左側障害物を回避 */
+/* 右へ避ける */
 void avoidRight() {
   stopMotor();
   delay(100);
@@ -215,7 +167,8 @@ void avoidRight() {
   delay(150);
 }
 
-/* 右側障害物を回避 */
+
+/* 左へ避ける */
 void avoidLeft() {
   stopMotor();
   delay(100);
@@ -230,77 +183,61 @@ void avoidLeft() {
 }
 
 
-/* =========================
-   IRセンサー更新
-   ========================= */
-
-void updateIRSensors() {
-  int leftRaw  = digitalRead(IRLED_L);
-  int rightRaw = digitalRead(IRLED_R);
-  /* 左 */
-  if (leftRaw == IR_ACTIVE) {
-    if (leftIRCount < IR_CONFIRM_COUNT) {
-      leftIRCount++;
-    }
-  } else {
-    leftIRCount = 0;
-  }
-
-  /* 右 */
-  if (rightRaw == IR_ACTIVE) {
-    if (rightIRCount < IR_CONFIRM_COUNT) {
-      rightIRCount++;
-    }
-  } else {
-    rightIRCount = 0;
-  }
-}
-
-
-/* 左側の障害物 */
+/* 左側の赤外線センサーを確認 */
 bool leftObstacle() {
-  return leftIRCount >= IR_CONFIRM_COUNT;
-}
+  if (digitalRead(IRLED_L) == IR_ACTIVE) {
+    delay(20);
 
-/* 右側の障害物 */
-bool rightObstacle() {
-  return rightIRCount >= IR_CONFIRM_COUNT;
-}
-
-/* IRカウンタをリセット */
-void resetIR() {
-  leftIRCount = 0;
-  rightIRCount = 0;
-}
-
-
-/* =========================
-   壁判定
-   ========================= */
-
-bool checkWall(float distance, float threshold) {
-  if (distance > 0 &&
-      distance <= threshold) {
-    wallCount++;
-  } else {
-    wallCount = 0;
+    if (digitalRead(IRLED_L) == IR_ACTIVE) {
+      return true;
+    }
   }
 
-  if (wallCount >= WALL_CONFIRM_COUNT) {
-    wallCount = 0;
-    return true;
-  }
   return false;
 }
 
+
+/* 右側の赤外線センサーを確認 */
+bool rightObstacle() {
+  if (digitalRead(IRLED_R) == IR_ACTIVE) {
+    delay(20);
+
+    if (digitalRead(IRLED_R) == IR_ACTIVE) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+
+/* 壁を確認 */
+bool checkWall(float distance, float threshold) {
+  if (distance > 0 && distance <= threshold) {
+    delay(20);
+
+    float distance2 = getDistance();
+
+    if (distance2 > 0 && distance2 <= threshold) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+
 void setup() {
   Serial.begin(115200);
-  /* 超音波 */
+
+  /* 超音波センサー */
   pinMode(HC_TRIG, OUTPUT);
   pinMode(HC_ECHO, INPUT);
-  /* IR */
+
+  /* 赤外線センサー */
   pinMode(IRLED_L, INPUT);
   pinMode(IRLED_R, INPUT);
+
   /* モーター */
   pinMode(RMO_EA, OUTPUT);
   pinMode(RMO_EB, OUTPUT);
@@ -309,10 +246,10 @@ void setup() {
   pinMode(RMO_MB1, OUTPUT);
   pinMode(RMO_MB2, OUTPUT);
 
-  /* サーボ */
+  /* サーボモーター */
   head.attach(SERVOPIN, 500, 2400);
-  /* 正面 */
   head.write(90);
+
   stopMotor();
   delay(1000);
 }
@@ -320,142 +257,99 @@ void setup() {
 
 void loop() {
   float frontDistance = getDistance();
-  updateIRSensors();
-  /* デバッグ表示 */
-  Serial.print("STATE: ");
-  Serial.println(state);
-  Serial.print("LEFT IR: ");
-  Serial.println(leftObstacle());
-  Serial.print("RIGHT IR: ");
-  Serial.println(rightObstacle());
-  Serial.print("FRONT: ");
-  Serial.println(frontDistance);
-  Serial.println("----------------");
 
-  bool canUseIR =
-      millis() >= ignoreIRUntil;
+  /* センサーの値を表示 */
+  Serial.print("状態: ");
+  Serial.println(state);
+  Serial.print("左IR: ");
+  Serial.println(digitalRead(IRLED_L));
+  Serial.print("右IR: ");
+  Serial.println(digitalRead(IRLED_R));
+  Serial.print("正面: ");
+  Serial.println(frontDistance);
+
   switch (state) {
-    /* ===================================
-       往路：横方向
-       =================================== */
+
+    /* スタートから横方向 */
     case OUTBOUND_HORIZONTAL:
-      if (checkWall(
-            frontDistance,
-            WALL_DISTANCE)) {
+      if (checkWall(frontDistance, WALL_DISTANCE)) {
         stopMotor();
         turnLeft90();
-        resetIR();
-        ignoreIRUntil =
-            millis() + IR_COOLDOWN;
         state = OUTBOUND_VERTICAL;
         break;
       }
 
-      if (canUseIR &&
-          leftObstacle()) {
+      if (leftObstacle()) {
         stopMotor();
         avoidRight();
-        resetIR();
-        ignoreIRUntil =
-            millis() + IR_COOLDOWN;
         break;
       }
+
       moveForward();
       break;
 
 
-
-    /* ===================================
-       往路：縦方向
-       =================================== */
+    /* 往路の縦方向 */
     case OUTBOUND_VERTICAL:
-      if (checkWall(
-            frontDistance,
-            WALL_DISTANCE)) {
+      if (checkWall(frontDistance, WALL_DISTANCE)) {
         stopMotor();
         uTurn();
-        resetIR();
-        ignoreIRUntil =
-            millis() + IR_COOLDOWN;
         state = RETURN_VERTICAL;
         break;
       }
 
-      if (canUseIR &&
-          rightObstacle()) {
+      if (rightObstacle()) {
         stopMotor();
         avoidLeft();
-        resetIR();
-        ignoreIRUntil =
-            millis() + IR_COOLDOWN;
         break;
       }
+
       moveForward();
       break;
 
 
-
-    /* ===================================
-       復路：縦方向
-       =================================== */
+    /* 復路の縦方向 */
     case RETURN_VERTICAL:
-      if (checkWall(
-            frontDistance,
-            WALL_DISTANCE)) {
+      if (checkWall(frontDistance, WALL_DISTANCE)) {
         stopMotor();
         turnRight90();
-        resetIR();
-        ignoreIRUntil =
-            millis() + IR_COOLDOWN;
         state = RETURN_HORIZONTAL;
         break;
       }
 
-      if (canUseIR &&
-          leftObstacle()) {
+      if (leftObstacle()) {
         stopMotor();
         avoidRight();
-        resetIR();
-        ignoreIRUntil =
-            millis() + IR_COOLDOWN;
         break;
       }
 
       moveForward();
       break;
 
-    /* ===================================
-       復路：横方向
-       =================================== */
 
+    /* 復路の横方向 */
     case RETURN_HORIZONTAL:
-      if (checkWall(
-            frontDistance,
-            GOAL_DISTANCE)) {
+      if (checkWall(frontDistance, GOAL_DISTANCE)) {
         stopMotor();
         state = GOAL;
         break;
       }
 
-      if (canUseIR &&
-          rightObstacle()) {
+      if (rightObstacle()) {
         stopMotor();
         avoidLeft();
-        resetIR();
-        ignoreIRUntil =
-            millis() + IR_COOLDOWN;
         break;
       }
+
       moveForward();
       break;
 
-    /* ===================================
-       ゴール
-       =================================== */
 
+    /* ゴール */
     case GOAL:
       stopMotor();
       break;
   }
+
   delay(20);
 }
