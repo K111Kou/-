@@ -1,0 +1,1186 @@
+#include <Servo.h>
+
+/* 超音波センサー */
+#define SERVOPIN  9
+#define HC_ECHO   2
+#define HC_TRIG   10
+
+/* 赤外線センサー */
+#define IRLED_L   4
+#define IRLED_R   5
+
+/* モーター */
+#define RMO_EA    3
+#define RMO_EB    6
+#define RMO_MB1   7
+#define RMO_MB2   8
+#define RMO_MA2   11
+#define RMO_MA1   12
+
+Servo head;
+
+
+/* モーターのPWM */
+const int L_PWM = 140;
+const int R_PWM = 140;
+
+/* 進行方向修正時のPWM */
+const int ADJUST_FAST_PWM = 140;
+const int ADJUST_SLOW_PWM = 90;
+
+
+/* 壁との距離 */
+const float WALL_DISTANCE = 20.0;
+const float GOAL_DISTANCE = 7.0;
+
+/* 左右を見たとき壁と判断する距離 */
+const float WIDE_WALL_DISTANCE = 35.0;
+
+
+/* サーボモーターの角度 */
+const int FRONT_ANGLE = 90;
+const int LEFT_ANGLE = 140;
+const int RIGHT_ANGLE = 45;
+
+
+/* 旋回時間 */
+const int TURN_90_MS = 350;
+
+/* Uターン */
+const int TURN_180_MS = 1800;
+
+
+/* 進行方向を修正する時間 */
+const int ADJUST_TIME = 100;
+
+
+/* 状態変更直後にIRを無視する時間 */
+const unsigned long STATE_IGNORE_TIME = 400;
+
+
+/* 赤外線センサーの反応 */
+const int IR_ACTIVE = LOW;
+
+
+/* ==================================================
+   状態管理
+   ================================================== */
+
+enum CourseState {
+
+  OUTBOUND_HORIZONTAL,
+
+  OUTBOUND_VERTICAL,
+
+  RETURN_VERTICAL,
+
+  RETURN_HORIZONTAL,
+
+  GOAL
+};
+
+CourseState state = OUTBOUND_HORIZONTAL;
+
+
+/* 状態が変更された時間 */
+unsigned long stateStartTime = 0;
+
+
+/*
+  正面壁判定を使用してよいか
+
+  Uターンや90度旋回直後はfalseにして、
+  一度正面が開けるまで次の壁判定を行わない
+*/
+bool frontArmed = true;
+
+
+/* ==================================================
+   正面判定結果
+   ================================================== */
+
+enum FrontResult {
+
+  FRONT_CLEAR,
+
+  FRONT_WALL,
+
+  FRONT_ADJUST_LEFT,
+
+  FRONT_ADJUST_RIGHT
+};
+
+
+/* ==================================================
+   超音波センサー
+   ================================================== */
+
+/* 超音波センサーで距離を求める */
+float getDistance() {
+
+  digitalWrite(HC_TRIG, LOW);
+  delayMicroseconds(2);
+
+  digitalWrite(HC_TRIG, HIGH);
+  delayMicroseconds(10);
+
+  digitalWrite(HC_TRIG, LOW);
+
+  unsigned long duration =
+    pulseIn(HC_ECHO, HIGH, 30000);
+
+
+  if (duration == 0) {
+
+    return 999.0;
+  }
+
+
+  return duration / 58.0;
+}
+
+
+/*
+  3回測定して中央値を使う
+
+  超音波センサーの一時的な
+  誤測定を減らす
+*/
+float getStableDistance() {
+
+  float a = getDistance();
+
+  delay(5);
+
+  float b = getDistance();
+
+  delay(5);
+
+  float c = getDistance();
+
+
+  if (a > b) {
+
+    float temp = a;
+
+    a = b;
+
+    b = temp;
+  }
+
+
+  if (b > c) {
+
+    float temp = b;
+
+    b = c;
+
+    c = temp;
+  }
+
+
+  if (a > b) {
+
+    float temp = a;
+
+    a = b;
+
+    b = temp;
+  }
+
+
+  return b;
+}
+
+
+/* 超音波センサーの角度を変えて距離を求める */
+float getDistanceAt(int angle) {
+
+  head.write(angle);
+
+  delay(250);
+
+  return getStableDistance();
+}
+
+
+/* ==================================================
+   赤外線センサー
+   ================================================== */
+
+/* 赤外線センサーを確認 */
+bool checkIR(int pin) {
+
+  if (digitalRead(pin) != IR_ACTIVE) {
+
+    return false;
+  }
+
+
+  delay(15);
+
+
+  return digitalRead(pin) == IR_ACTIVE;
+}
+
+
+/* ==================================================
+   モーター
+   ================================================== */
+
+/* 前進 */
+void moveForward() {
+
+  analogWrite(RMO_EA, R_PWM);
+
+  digitalWrite(RMO_MA1, HIGH);
+  digitalWrite(RMO_MA2, LOW);
+
+
+  analogWrite(RMO_EB, L_PWM);
+
+  digitalWrite(RMO_MB1, HIGH);
+  digitalWrite(RMO_MB2, LOW);
+}
+
+
+/* 停止 */
+void stopMotor() {
+
+  analogWrite(RMO_EA, 0);
+
+  digitalWrite(RMO_MA1, LOW);
+  digitalWrite(RMO_MA2, LOW);
+
+
+  analogWrite(RMO_EB, 0);
+
+  digitalWrite(RMO_MB1, LOW);
+  digitalWrite(RMO_MB2, LOW);
+}
+
+
+/* 左旋回 */
+void turnLeft() {
+
+  analogWrite(RMO_EA, R_PWM);
+
+  digitalWrite(RMO_MA1, HIGH);
+  digitalWrite(RMO_MA2, LOW);
+
+
+  analogWrite(RMO_EB, L_PWM);
+
+  digitalWrite(RMO_MB1, LOW);
+  digitalWrite(RMO_MB2, HIGH);
+}
+
+
+/* 右旋回 */
+void turnRight() {
+
+  analogWrite(RMO_EA, R_PWM);
+
+  digitalWrite(RMO_MA1, LOW);
+  digitalWrite(RMO_MA2, HIGH);
+
+
+  analogWrite(RMO_EB, L_PWM);
+
+  digitalWrite(RMO_MB1, HIGH);
+  digitalWrite(RMO_MB2, LOW);
+}
+
+
+/* 少し右へ進む */
+void adjustRight() {
+
+  /*
+    右モーターを遅くして
+    緩やかに右へ曲がる
+  */
+
+  analogWrite(RMO_EA, ADJUST_SLOW_PWM);
+
+  digitalWrite(RMO_MA1, HIGH);
+  digitalWrite(RMO_MA2, LOW);
+
+
+  analogWrite(RMO_EB, ADJUST_FAST_PWM);
+
+  digitalWrite(RMO_MB1, HIGH);
+  digitalWrite(RMO_MB2, LOW);
+
+
+  delay(ADJUST_TIME);
+}
+
+
+/* 少し左へ進む */
+void adjustLeft() {
+
+  /*
+    左モーターを遅くして
+    緩やかに左へ曲がる
+  */
+
+  analogWrite(RMO_EA, ADJUST_FAST_PWM);
+
+  digitalWrite(RMO_MA1, HIGH);
+  digitalWrite(RMO_MA2, LOW);
+
+
+  analogWrite(RMO_EB, ADJUST_SLOW_PWM);
+
+  digitalWrite(RMO_MB1, HIGH);
+  digitalWrite(RMO_MB2, LOW);
+
+
+  delay(ADJUST_TIME);
+}
+
+
+/* ==================================================
+   旋回
+   ================================================== */
+
+/* 左へ90度 */
+void turnLeft90() {
+
+  stopMotor();
+
+  delay(200);
+
+
+  turnLeft();
+
+  delay(TURN_90_MS);
+
+
+  stopMotor();
+
+  delay(200);
+}
+
+
+/* 右へ90度 */
+void turnRight90() {
+
+  stopMotor();
+
+  delay(200);
+
+
+  turnRight();
+
+  delay(TURN_90_MS);
+
+
+  stopMotor();
+
+  delay(200);
+}
+
+
+/* Uターン */
+void uTurn() {
+
+  stopMotor();
+
+  delay(200);
+
+
+  /*
+    右へ180度旋回
+  */
+  turnRight();
+
+  delay(TURN_180_MS);
+
+
+  stopMotor();
+
+  delay(200);
+
+
+  /*
+    元の壁から離れるため
+    少し前へ進む
+  */
+  moveForward();
+
+  delay(400);
+
+
+  stopMotor();
+
+  delay(200);
+}
+
+
+/* ==================================================
+   状態変更
+   ================================================== */
+
+/*
+  requireFrontClear
+
+  trueの場合、
+
+  旋回前に見ていた壁を
+  次の状態でもう一度検知しないようにする
+*/
+void changeState(
+  CourseState nextState,
+  bool requireFrontClear
+) {
+
+  state = nextState;
+
+  stateStartTime = millis();
+
+
+  /*
+    trueの場合は一旦ロック
+  */
+  frontArmed = !requireFrontClear;
+
+
+  Serial.print("状態変更 -> ");
+
+  Serial.println((int)state);
+
+
+  if (!frontArmed) {
+
+    Serial.println("正面判定ロック");
+  }
+}
+
+
+/* ==================================================
+   旋回後の正面判定ロック解除
+   ================================================== */
+
+bool updateFrontArmed(
+  float frontDistance,
+  float threshold
+) {
+
+  /*
+    すでに使用可能
+  */
+  if (frontArmed) {
+
+    return true;
+  }
+
+
+  /*
+    一度正面が開けたことを確認
+
+    ここを通過するまで
+    次の壁として判定しない
+  */
+  if (
+    frontDistance <= 0 ||
+    frontDistance > threshold
+  ) {
+
+    frontArmed = true;
+
+
+    Serial.println(
+      "正面が開けたため壁判定を再開"
+    );
+
+
+    return true;
+  }
+
+
+  /*
+    まだ前の壁が見えている
+  */
+  return false;
+}
+
+
+/* ==================================================
+   正面判定
+   ================================================== */
+
+FrontResult checkFront(
+  float frontDistance,
+  float threshold,
+  bool leftIR,
+  bool rightIR
+) {
+
+  /*
+    正面に何もない
+  */
+  if (
+    frontDistance <= 0 ||
+    frontDistance > threshold
+  ) {
+
+    return FRONT_CLEAR;
+  }
+
+
+  /*
+    一度だけでは判断しない
+  */
+  delay(20);
+
+
+  float frontDistance2 =
+    getStableDistance();
+
+
+  if (
+    frontDistance2 <= 0 ||
+    frontDistance2 > threshold
+  ) {
+
+    return FRONT_CLEAR;
+  }
+
+
+  /*
+    正面に何かあるので停止
+  */
+  stopMotor();
+
+  delay(100);
+
+
+  /*
+    左右を確認
+  */
+  float leftDistance =
+    getDistanceAt(LEFT_ANGLE);
+
+
+  float rightDistance =
+    getDistanceAt(RIGHT_ANGLE);
+
+
+  /*
+    センサーを正面へ戻す
+  */
+  head.write(FRONT_ANGLE);
+
+  delay(150);
+
+
+  Serial.print("左距離: ");
+
+  Serial.println(leftDistance);
+
+
+  Serial.print("右距離: ");
+
+  Serial.println(rightDistance);
+
+
+  /*
+    左右にも壁がある
+
+    正面の広い壁と判断
+  */
+  if (
+    leftDistance <= WIDE_WALL_DISTANCE &&
+    rightDistance <= WIDE_WALL_DISTANCE
+  ) {
+
+    return FRONT_WALL;
+  }
+
+
+  /*
+    左側IRのみ反応
+
+    右へ避ける
+  */
+  if (
+    leftIR &&
+    !rightIR
+  ) {
+
+    return FRONT_ADJUST_RIGHT;
+  }
+
+
+  /*
+    右側IRのみ反応
+
+    左へ避ける
+  */
+  if (
+    rightIR &&
+    !leftIR
+  ) {
+
+    return FRONT_ADJUST_LEFT;
+  }
+
+
+  /*
+    正面の狭い障害物
+
+    空いている方向へ避ける
+  */
+  if (leftDistance > rightDistance) {
+
+    return FRONT_ADJUST_LEFT;
+  }
+
+
+  return FRONT_ADJUST_RIGHT;
+}
+
+
+/* ==================================================
+   IRによる進行方向修正
+   ================================================== */
+
+bool adjustByIR(
+  bool leftIR,
+  bool rightIR
+) {
+
+  /*
+    状態変更直後は
+    前の壁を拾いやすいため無視
+  */
+  if (
+    millis() - stateStartTime <
+    STATE_IGNORE_TIME
+  ) {
+
+    return false;
+  }
+
+
+  /*
+    左側に物がある
+  */
+  if (
+    leftIR &&
+    !rightIR
+  ) {
+
+    adjustRight();
+
+    return true;
+  }
+
+
+  /*
+    右側に物がある
+  */
+  if (
+    rightIR &&
+    !leftIR
+  ) {
+
+    adjustLeft();
+
+    return true;
+  }
+
+
+  return false;
+}
+
+
+/* ==================================================
+   setup
+   ================================================== */
+
+void setup() {
+
+  Serial.begin(115200);
+
+
+  /* 超音波センサー */
+  pinMode(HC_TRIG, OUTPUT);
+
+  pinMode(HC_ECHO, INPUT);
+
+
+  /* 赤外線センサー */
+  pinMode(IRLED_L, INPUT);
+
+  pinMode(IRLED_R, INPUT);
+
+
+  /* モーター */
+  pinMode(RMO_EA, OUTPUT);
+
+  pinMode(RMO_EB, OUTPUT);
+
+
+  pinMode(RMO_MA1, OUTPUT);
+
+  pinMode(RMO_MA2, OUTPUT);
+
+  pinMode(RMO_MB1, OUTPUT);
+
+  pinMode(RMO_MB2, OUTPUT);
+
+
+  /* サーボ */
+  head.attach(
+    SERVOPIN,
+    500,
+    2400
+  );
+
+
+  head.write(FRONT_ANGLE);
+
+
+  stopMotor();
+
+  delay(1000);
+
+
+  stateStartTime = millis();
+}
+
+
+/* ==================================================
+   loop
+   ================================================== */
+
+void loop() {
+
+  float frontDistance =
+    getStableDistance();
+
+
+  bool leftIR =
+    checkIR(IRLED_L);
+
+
+  bool rightIR =
+    checkIR(IRLED_R);
+
+
+  /* センサー値表示 */
+
+  Serial.print("状態: ");
+
+  Serial.print((int)state);
+
+
+  Serial.print("  左IR: ");
+
+  Serial.print(leftIR);
+
+
+  Serial.print("  右IR: ");
+
+  Serial.print(rightIR);
+
+
+  Serial.print("  正面: ");
+
+  Serial.print(frontDistance);
+
+
+  Serial.print("  FRONT_ARMED: ");
+
+  Serial.println(frontArmed);
+
+
+  FrontResult frontResult;
+
+
+  switch (state) {
+
+
+    /* ==================================================
+       往路 横方向
+       ================================================== */
+
+    case OUTBOUND_HORIZONTAL:
+
+
+      frontResult =
+        checkFront(
+          frontDistance,
+          WALL_DISTANCE,
+          leftIR,
+          rightIR
+        );
+
+
+      /*
+        コーナー
+      */
+      if (
+        frontResult ==
+        FRONT_WALL
+      ) {
+
+        turnLeft90();
+
+
+        /*
+          左折直後の壁を
+          再び拾わないようにロック
+        */
+        changeState(
+          OUTBOUND_VERTICAL,
+          true
+        );
+
+
+        break;
+      }
+
+
+      if (
+        frontResult ==
+        FRONT_ADJUST_RIGHT
+      ) {
+
+        adjustRight();
+
+        break;
+      }
+
+
+      if (
+        frontResult ==
+        FRONT_ADJUST_LEFT
+      ) {
+
+        adjustLeft();
+
+        break;
+      }
+
+
+      if (
+        adjustByIR(
+          leftIR,
+          rightIR
+        )
+      ) {
+
+        break;
+      }
+
+
+      moveForward();
+
+      break;
+
+
+
+    /* ==================================================
+       往路 縦方向
+       ================================================== */
+
+    case OUTBOUND_VERTICAL:
+
+
+      /*
+        左折前に見ていた壁が
+        視界から消えるまで待つ
+      */
+      if (
+        !updateFrontArmed(
+          frontDistance,
+          WALL_DISTANCE
+        )
+      ) {
+
+        /*
+          この間は壁による
+          状態遷移を行わない
+        */
+
+        moveForward();
+
+        break;
+      }
+
+
+      frontResult =
+        checkFront(
+          frontDistance,
+          WALL_DISTANCE,
+          leftIR,
+          rightIR
+        );
+
+
+      /*
+        Uターン地点
+      */
+      if (
+        frontResult ==
+        FRONT_WALL
+      ) {
+
+        uTurn();
+
+
+        /*
+          ここが今回一番重要
+
+          Uターン前に見ていた壁を
+          RETURN_VERTICALで
+          もう一度検知させない
+        */
+        changeState(
+          RETURN_VERTICAL,
+          true
+        );
+
+
+        break;
+      }
+
+
+      if (
+        frontResult ==
+        FRONT_ADJUST_RIGHT
+      ) {
+
+        adjustRight();
+
+        break;
+      }
+
+
+      if (
+        frontResult ==
+        FRONT_ADJUST_LEFT
+      ) {
+
+        adjustLeft();
+
+        break;
+      }
+
+
+      if (
+        adjustByIR(
+          leftIR,
+          rightIR
+        )
+      ) {
+
+        break;
+      }
+
+
+      moveForward();
+
+      break;
+
+
+
+    /* ==================================================
+       復路 縦方向
+       ================================================== */
+
+    case RETURN_VERTICAL:
+
+
+      /*
+        Uターン直後は
+        次の壁判定を行わない
+
+        一度正面が開けてから
+        壁判定を再開する
+      */
+      if (
+        !updateFrontArmed(
+          frontDistance,
+          WALL_DISTANCE
+        )
+      ) {
+
+        /*
+          IRについても
+          stateStartTimeによって
+          直後は無視される
+        */
+
+        moveForward();
+
+        break;
+      }
+
+
+      frontResult =
+        checkFront(
+          frontDistance,
+          WALL_DISTANCE,
+          leftIR,
+          rightIR
+        );
+
+
+      /*
+        帰りのコーナー
+      */
+      if (
+        frontResult ==
+        FRONT_WALL
+      ) {
+
+        turnRight90();
+
+
+        changeState(
+          RETURN_HORIZONTAL,
+          true
+        );
+
+
+        break;
+      }
+
+
+      if (
+        frontResult ==
+        FRONT_ADJUST_RIGHT
+      ) {
+
+        adjustRight();
+
+        break;
+      }
+
+
+      if (
+        frontResult ==
+        FRONT_ADJUST_LEFT
+      ) {
+
+        adjustLeft();
+
+        break;
+      }
+
+
+      if (
+        adjustByIR(
+          leftIR,
+          rightIR
+        )
+      ) {
+
+        break;
+      }
+
+
+      moveForward();
+
+      break;
+
+
+
+    /* ==================================================
+       復路 横方向
+       ================================================== */
+
+    case RETURN_HORIZONTAL:
+
+
+      /*
+        右折直後の壁が
+        視界から消えるまで
+        ゴール判定を行わない
+      */
+      if (
+        !updateFrontArmed(
+          frontDistance,
+          GOAL_DISTANCE
+        )
+      ) {
+
+        moveForward();
+
+        break;
+      }
+
+
+      /*
+        ゴール判定
+
+        ゴールでは壁か障害物かを
+        分類する必要がない
+      */
+      if (
+        frontDistance > 0 &&
+        frontDistance <= GOAL_DISTANCE
+      ) {
+
+        delay(20);
+
+
+        float confirmDistance =
+          getStableDistance();
+
+
+        if (
+          confirmDistance > 0 &&
+          confirmDistance <= GOAL_DISTANCE
+        ) {
+
+          stopMotor();
+
+
+          changeState(
+            GOAL,
+            false
+          );
+
+
+          break;
+        }
+      }
+
+
+      if (
+        adjustByIR(
+          leftIR,
+          rightIR
+        )
+      ) {
+
+        break;
+      }
+
+
+      moveForward();
+
+      break;
+
+
+
+    /* ==================================================
+       ゴール
+       ================================================== */
+
+    case GOAL:
+
+
+      stopMotor();
+
+      break;
+  }
+
+
+  delay(20);
+}
