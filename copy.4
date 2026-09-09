@@ -20,23 +20,23 @@
 Servo head;
 
 /* モーターのPWM */
-const int L_PWM = 160;
+const int L_PWM = 140;
 const int R_PWM = 140;
 
 /* 進行方向を修正するときのPWM */
-const int L_ADJUST_PWM = 100;
-const int R_ADJUST_PWM = 90;
+const int L_ADJUST_PWM = 140;
+const int R_ADJUST_PWM = 140;
 
 /* 壁との距離 */
 const float WALL_DISTANCE = 20.0;
 const float GOAL_DISTANCE = 5.0;
 
 /* 左右を見たとき壁と判断する距離 */
-const float WIDE_WALL_DISTANCE = 45.0;
+const float WIDE_WALL_DISTANCE = 15.0;
 
 /* サーボモーターの角度 */
 const int FRONT_ANGLE = 90;
-const int LEFT_ANGLE = 135;
+const int LEFT_ANGLE = 140;
 const int RIGHT_ANGLE = 45;
 
 /* 旋回時間 */
@@ -44,7 +44,7 @@ const int TURN_90_MS = 350;
 const int TURN_180_MS = 700;
 
 /* 進行方向を修正する時間 */
-const int ADJUST_TIME = 100;
+const int ADJUST_TIME = 150;
 
 /* 赤外線センサーの反応 */
 const int IR_ACTIVE = LOW;
@@ -163,8 +163,8 @@ void turnRight() {
 /* 少し右へ進む */
 void adjustRight() {
   analogWrite(RMO_EA, R_ADJUST_PWM);
-  digitalWrite(RMO_MA1, HIGH);
-  digitalWrite(RMO_MA2, LOW);
+  digitalWrite(RMO_MA1, LOW);
+  digitalWrite(RMO_MA2, HIGH);
 
   analogWrite(RMO_EB, L_PWM);
   digitalWrite(RMO_MB1, HIGH);
@@ -181,8 +181,8 @@ void adjustLeft() {
   digitalWrite(RMO_MA2, LOW);
 
   analogWrite(RMO_EB, L_ADJUST_PWM);
-  digitalWrite(RMO_MB1, HIGH);
-  digitalWrite(RMO_MB2, LOW);
+  digitalWrite(RMO_MB1, LOW);
+  digitalWrite(RMO_MB2, HIGH);
 
   delay(ADJUST_TIME);
 }
@@ -220,10 +220,17 @@ void uTurn() {
   delay(200);
 
   turnRight();
-  delay(TURN_180_MS);
+  delay(2160);
 
   stopMotor();
   delay(200);
+
+  moveForward();
+  delay(500);
+
+  stopMotor();
+  delay(200);
+
 }
 
 
@@ -355,6 +362,8 @@ void loop() {
       );
 
       if (frontResult == FRONT_WALL) {
+        moveForward();
+        delay(400);
         turnLeft90();
         state = OUTBOUND_VERTICAL;
         break;
@@ -395,20 +404,13 @@ void loop() {
       );
 
       if (frontResult == FRONT_WALL) {
+        moveForward();
+        delay(200);
         uTurn();
         state = RETURN_VERTICAL;
         break;
       }
 
-      if (frontResult == FRONT_ADJUST_RIGHT) {
-        adjustRight();
-        break;
-      }
-
-      if (frontResult == FRONT_ADJUST_LEFT) {
-        adjustLeft();
-        break;
-      }
 
       if (leftIR && !rightIR) {
         adjustRight();
@@ -422,6 +424,7 @@ void loop() {
 
       moveForward();
       break;
+
 
 
     /* 復路　*/
