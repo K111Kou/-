@@ -1,0 +1,609 @@
+#include <Servo.h>
+
+/* 超音波センサー */
+#define SERVOPIN  9
+#define HC_ECHO   2
+#define HC_TRIG   10
+
+/* 赤外線センサー */
+#define IRLED_L   4
+#define IRLED_R   5
+
+/* モーター */
+#define RMO_EA    3
+#define RMO_EB    6
+#define RMO_MB1   7
+#define RMO_MB2   8
+#define RMO_MA2   11
+#define RMO_MA1   12
+
+Servo head;
+
+
+/* モーターのPWM */
+const int L_PWM = 140;
+const int R_PWM = 140;
+
+
+/* 壁との距離 */
+const float WALL_DISTANCE = 20.0;
+
+
+/* サーボモーターの角度 */
+const int FRONT_ANGLE = 90;
+const int LEFT_ANGLE = 140;
+const int RIGHT_ANGLE = 45;
+
+
+/* 旋回時間 */
+const int TURN_90_MS = 350;
+const int TURN_180_MS = 1800;
+
+
+/* 赤外線センサー */
+const int IR_ACTIVE = LOW;
+
+
+/* ==================================================
+   超音波センサー
+   ================================================== */
+
+/* 距離を1回測定 */
+float getDistance() {
+
+  digitalWrite(HC_TRIG, LOW);
+  delayMicroseconds(2);
+
+  digitalWrite(HC_TRIG, HIGH);
+  delayMicroseconds(10);
+
+  digitalWrite(HC_TRIG, LOW);
+
+
+  unsigned long duration =
+    pulseIn(HC_ECHO, HIGH, 30000);
+
+
+  if (duration == 0) {
+    return 999.0;
+  }
+
+
+  return duration / 58.0;
+}
+
+
+/*
+  3回測定して中央値を返す
+
+  超音波センサーの
+  一時的な誤測定を減らす
+*/
+float getStableDistance() {
+
+  float a = getDistance();
+  delay(5);
+
+  float b = getDistance();
+  delay(5);
+
+  float c = getDistance();
+
+
+  if (a > b) {
+
+    float temp = a;
+    a = b;
+    b = temp;
+  }
+
+
+  if (b > c) {
+
+    float temp = b;
+    b = c;
+    c = temp;
+  }
+
+
+  if (a > b) {
+
+    float temp = a;
+    a = b;
+    b = temp;
+  }
+
+
+  return b;
+}
+
+
+/* 指定した方向を見る */
+float getDistanceAt(int angle) {
+
+  head.write(angle);
+
+  delay(300);
+
+  return getStableDistance();
+}
+
+
+/* ==================================================
+   赤外線センサー
+   ================================================== */
+
+bool checkIR(int pin) {
+
+  /* 1回目 */
+  if (digitalRead(pin) != IR_ACTIVE) {
+    return false;
+  }
+
+
+  /* 誤反応対策 */
+  delay(20);
+
+
+  /* 2回連続で反応しているか */
+  if (digitalRead(pin) == IR_ACTIVE) {
+    return true;
+  }
+
+
+  return false;
+}
+
+
+/* ==================================================
+   モーター
+   ================================================== */
+
+/* 前進 */
+void moveForward() {
+
+  analogWrite(RMO_EA, R_PWM);
+
+  digitalWrite(RMO_MA1, HIGH);
+  digitalWrite(RMO_MA2, LOW);
+
+
+  analogWrite(RMO_EB, L_PWM);
+
+  digitalWrite(RMO_MB1, HIGH);
+  digitalWrite(RMO_MB2, LOW);
+}
+
+
+/* 停止 */
+void stopMotor() {
+
+  analogWrite(RMO_EA, 0);
+
+  digitalWrite(RMO_MA1, LOW);
+  digitalWrite(RMO_MA2, LOW);
+
+
+  analogWrite(RMO_EB, 0);
+
+  digitalWrite(RMO_MB1, LOW);
+  digitalWrite(RMO_MB2, LOW);
+}
+
+
+/* 左旋回 */
+void turnLeft() {
+
+  analogWrite(RMO_EA, R_PWM);
+
+  digitalWrite(RMO_MA1, HIGH);
+  digitalWrite(RMO_MA2, LOW);
+
+
+  analogWrite(RMO_EB, L_PWM);
+
+  digitalWrite(RMO_MB1, LOW);
+  digitalWrite(RMO_MB2, HIGH);
+}
+
+
+/* 右旋回 */
+void turnRight() {
+
+  analogWrite(RMO_EA, R_PWM);
+
+  digitalWrite(RMO_MA1, LOW);
+  digitalWrite(RMO_MA2, HIGH);
+
+
+  analogWrite(RMO_EB, L_PWM);
+
+  digitalWrite(RMO_MB1, HIGH);
+  digitalWrite(RMO_MB2, LOW);
+}
+
+
+/* 左へ90度 */
+void turnLeft90() {
+
+  stopMotor();
+  delay(200);
+
+
+  turnLeft();
+
+  delay(TURN_90_MS);
+
+
+  stopMotor();
+  delay(200);
+}
+
+
+/* 右へ90度 */
+void turnRight90() {
+
+  stopMotor();
+  delay(200);
+
+
+  turnRight();
+
+  delay(TURN_90_MS);
+
+
+  stopMotor();
+  delay(200);
+}
+
+
+/* Uターン */
+void uTurn() {
+
+  stopMotor();
+  delay(200);
+
+
+  turnRight();
+
+  delay(TURN_180_MS);
+
+
+  stopMotor();
+  delay(200);
+
+
+  /*
+    Uターンした場所から
+    少し離れる
+  */
+  moveForward();
+
+  delay(500);
+
+
+  stopMotor();
+  delay(200);
+}
+
+
+/* ==================================================
+   周囲を確認
+   ================================================== */
+
+void checkAround() {
+
+  stopMotor();
+
+  delay(200);
+
+
+  /* 左を見る */
+  float leftDistance =
+    getDistanceAt(LEFT_ANGLE);
+
+
+  /* 正面を見る */
+  float frontDistance =
+    getDistanceAt(FRONT_ANGLE);
+
+
+  /* 右を見る */
+  float rightDistance =
+    getDistanceAt(RIGHT_ANGLE);
+
+
+  /* 正面に戻す */
+  head.write(FRONT_ANGLE);
+
+  delay(200);
+
+
+  /* デバッグ表示 */
+  Serial.println("----------------");
+
+  Serial.print("左: ");
+  Serial.println(leftDistance);
+
+  Serial.print("正面: ");
+  Serial.println(frontDistance);
+
+  Serial.print("右: ");
+  Serial.println(rightDistance);
+
+
+  /*
+    それぞれの方向が
+    塞がっているか確認
+  */
+  bool leftBlocked =
+    leftDistance <= WALL_DISTANCE;
+
+  bool frontBlocked =
+    frontDistance <= WALL_DISTANCE;
+
+  bool rightBlocked =
+    rightDistance <= WALL_DISTANCE;
+
+
+  /* ==================================================
+     行き止まり
+     
+     正面・左・右が全部壁
+     
+     この場合だけUターンする
+     ================================================== */
+
+  if (
+    leftBlocked &&
+    frontBlocked &&
+    rightBlocked
+  ) {
+
+    Serial.println("行き止まり -> Uターン");
+
+
+    uTurn();
+
+    return;
+  }
+
+
+  /* ==================================================
+     正面が空いている
+     
+     基本的にはそのまま前進を優先
+     ================================================== */
+
+  if (!frontBlocked) {
+
+    /*
+      正面が左右より十分空いている場合は
+      そのまま進む
+    */
+
+    if (
+      frontDistance >= leftDistance &&
+      frontDistance >= rightDistance
+    ) {
+
+      Serial.println("正面へ進む");
+
+
+      moveForward();
+
+      return;
+    }
+  }
+
+
+  /* ==================================================
+     左右を比較
+     
+     空いている方へ進む
+     ================================================== */
+
+  if (
+    !leftBlocked &&
+    leftDistance >= rightDistance
+  ) {
+
+    Serial.println("左へ進む");
+
+
+    turnLeft90();
+
+    moveForward();
+
+    return;
+  }
+
+
+  if (!rightBlocked) {
+
+    Serial.println("右へ進む");
+
+
+    turnRight90();
+
+    moveForward();
+
+    return;
+  }
+
+
+  /*
+    左右が塞がっているが
+    正面だけ空いている場合
+  */
+  if (!frontBlocked) {
+
+    Serial.println("正面へ進む");
+
+
+    moveForward();
+
+    return;
+  }
+
+
+  /*
+    念のため
+  */
+  Serial.println("判断できないため停止");
+
+
+  stopMotor();
+}
+
+
+/* ==================================================
+   setup
+   ================================================== */
+
+void setup() {
+
+  Serial.begin(115200);
+
+
+  /* 超音波センサー */
+  pinMode(HC_TRIG, OUTPUT);
+
+  pinMode(HC_ECHO, INPUT);
+
+
+  /* 赤外線センサー */
+  pinMode(IRLED_L, INPUT);
+
+  pinMode(IRLED_R, INPUT);
+
+
+  /* モーター */
+  pinMode(RMO_EA, OUTPUT);
+
+  pinMode(RMO_EB, OUTPUT);
+
+  pinMode(RMO_MA1, OUTPUT);
+
+  pinMode(RMO_MA2, OUTPUT);
+
+  pinMode(RMO_MB1, OUTPUT);
+
+  pinMode(RMO_MB2, OUTPUT);
+
+
+  /* サーボモーター */
+  head.attach(
+    SERVOPIN,
+    500,
+    2400
+  );
+
+
+  head.write(FRONT_ANGLE);
+
+
+  stopMotor();
+
+  delay(1000);
+}
+
+
+/* ==================================================
+   loop
+   ================================================== */
+
+void loop() {
+
+  /*
+    左右のIRを確認
+  */
+  bool leftIR =
+    checkIR(IRLED_L);
+
+
+  bool rightIR =
+    checkIR(IRLED_R);
+
+
+  /*
+    正面の距離
+  */
+  float frontDistance =
+    getStableDistance();
+
+
+  /* デバッグ */
+  Serial.print("左IR: ");
+
+  Serial.print(leftIR);
+
+
+  Serial.print("  右IR: ");
+
+  Serial.print(rightIR);
+
+
+  Serial.print("  正面: ");
+
+  Serial.println(frontDistance);
+
+
+  /* ==================================================
+     IRが何かを検知した
+     
+     ここで初めて周囲を詳しく調べる
+     ================================================== */
+
+  if (
+    leftIR ||
+    rightIR
+  ) {
+
+    Serial.println("IR検知 -> 周囲確認");
+
+
+    checkAround();
+
+
+    delay(100);
+
+    return;
+  }
+
+
+  /* ==================================================
+     正面が近すぎる場合も確認
+     
+     IRが正面の壁を
+     拾えなかった場合の保険
+     ================================================== */
+
+  if (
+    frontDistance > 0 &&
+    frontDistance <= WALL_DISTANCE
+  ) {
+
+    Serial.println(
+      "正面検知 -> 周囲確認"
+    );
+
+
+    checkAround();
+
+
+    delay(100);
+
+    return;
+  }
+
+
+  /* ==================================================
+     何もなければ前進
+     ================================================== */
+
+  moveForward();
+
+
+  delay(20);
+}
