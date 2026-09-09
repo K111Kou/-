@@ -1,0 +1,112 @@
+/* ゴールを確認 */
+bool checkGoal(bool leftIR, bool rightIR) {
+
+  /* IRが何も反応していない */
+  if (!leftIR && !rightIR) {
+    return false;
+  }
+
+  stopMotor();
+  delay(100);
+
+  float distance;
+
+
+  /*
+     左IRが反応した場合
+     左方向を超音波センサーで確認
+  */
+  if (leftIR) {
+
+    distance = getDistanceAt(LEFT_ANGLE);
+
+    Serial.print("ゴール確認 左: ");
+    Serial.println(distance);
+
+    /* 左にも壁があればゴール */
+    if (distance <= WIDE_WALL_DISTANCE) {
+
+      head.write(FRONT_ANGLE);
+      delay(200);
+
+      return true;
+    }
+  }
+
+
+  /*
+     右IRが反応した場合
+     右方向を超音波センサーで確認
+  */
+  if (rightIR) {
+
+    distance = getDistanceAt(RIGHT_ANGLE);
+
+    Serial.print("ゴール確認 右: ");
+    Serial.println(distance);
+
+    /* 右にも壁があればゴール */
+    if (distance <= WIDE_WALL_DISTANCE) {
+
+      head.write(FRONT_ANGLE);
+      delay(200);
+
+      return true;
+    }
+  }
+
+
+  /* 正面へ戻す */
+  head.write(FRONT_ANGLE);
+  delay(200);
+
+  return false;
+}
+
+
+
+
+
+case RETURN_HORIZONTAL:
+
+  /*
+     ゴール判定
+
+     IRが反応した場合、
+     反応した側を超音波センサーで確認する
+  */
+  if (checkGoal(leftIR, rightIR)) {
+
+    stopMotor();
+
+    state = GOAL;
+
+    Serial.println("GOAL");
+
+    break;
+  }
+
+
+  /*
+     ゴールでなければ
+     IRの反応に応じて進行方向を修正
+  */
+  if (leftIR && !rightIR) {
+
+    adjustRight();
+
+    break;
+  }
+
+
+  if (rightIR && !leftIR) {
+
+    adjustLeft();
+
+    break;
+  }
+
+
+  moveForward();
+
+  break;
